@@ -12,12 +12,15 @@ env:
 
 jobs:
   build:
+    name: Build & Push Image
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      # 1️⃣ Descargar código
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      # 1️⃣ Primero autenticamos AWS
+      # 2️⃣ Autenticación AWS (SIEMPRE primero)
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -25,39 +28,52 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 2️⃣ Login automático a ECR (FORMA OFICIAL)
+      # 3️⃣ Login oficial a ECR
       - name: Login to Amazon ECR
+        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 3️⃣ Build & Push
-      - name: Build & Push Docker image
+      # 4️⃣ Build imagen Docker
+      - name: Build Docker image
         run: |
           docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+
+      # 5️⃣ Push a ECR
+      - name: Push Docker image
+        run: |
           docker push $ECR_REPOSITORY:$IMAGE_TAG
 
+
   deploy:
+    name: Deploy en EC2
     needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - name: Deploy en EC2
-        uses: appleboy/ssh-action@v1
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            echo "Deploying image..."
 
-            # ⚠️ EC2 también necesita login ECR
+            echo "Login a ECR desde EC2..."
+
             aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
             | docker login --username AWS --password-stdin \
               $(echo ${{ secrets.ECR_REPOSITORY }} | cut -d'/' -f1)
 
+            echo "Descargando nueva imagen..."
             docker pull ${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
 
+            echo "Reiniciando contenedor..."
             docker stop demo || true
             docker rm demo || true
 
-            docker run -d -p 80:8080 --name demo \
+            docker run -d \
+              --name demo \
+              -p 80:8080 \
               ${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+
+            echo "Deploy finalizado ✅"
