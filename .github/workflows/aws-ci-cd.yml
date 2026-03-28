@@ -1,4 +1,4 @@
-name: CI/CD con GitHub Actions y AWS
+name: CI/CD Docker → AWS ECR → EC2
 
 on:
   push:
@@ -6,21 +6,23 @@ on:
       - dev
 
 env:
-  IMAGE_TAG: ${{ github.sha }}
   AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  IMAGE_TAG: ${{ github.sha }}
 
 jobs:
+# =====================================================
+# BUILD & PUSH IMAGE TO ECR
+# =====================================================
   build:
-    name: Build & Push Image
+    name: Build and Push Docker Image
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Descargar código
+      # 1️⃣ Checkout código
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Autenticación AWS (SIEMPRE primero)
+      # 2️⃣ Autenticación AWS
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -28,24 +30,30 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Login oficial a ECR
+      # 3️⃣ Login oficial a ECR (IMPORTANTE)
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 4️⃣ Build imagen Docker
-      - name: Build Docker image
+      # 4️⃣ Build + Push usando registry correcto (CLAVE)
+      - name: Build, tag and push image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: mi_app_devops   # 👈 nombre EXACTO del repo ECR
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+          IMAGE_URI=$REGISTRY/$REPOSITORY:$IMAGE_TAG
 
-      # 5️⃣ Push a ECR
-      - name: Push Docker image
-        run: |
-          docker push $ECR_REPOSITORY:$IMAGE_TAG
+          echo "Building image $IMAGE_URI"
 
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
 
+# =====================================================
+# DEPLOY EN EC2
+# =====================================================
   deploy:
-    name: Deploy en EC2
+    name: Deploy to EC2
     needs: build
     runs-on: ubuntu-latest
 
@@ -58,22 +66,25 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
 
-            echo "Login a ECR desde EC2..."
+            REGION="${{ secrets.AWS_REGION }}"
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            REGISTRY="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
+            IMAGE_URI="$REGISTRY/mi_app_devops:${{ github.sha }}"
 
-            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
-            | docker login --username AWS --password-stdin \
-              $(echo ${{ secrets.ECR_REPOSITORY }} | cut -d'/' -f1)
+            echo "Login to ECR from EC2..."
+            aws ecr get-login-password --region $REGION \
+            | docker login --username AWS --password-stdin $REGISTRY
 
-            echo "Descargando nueva imagen..."
-            docker pull ${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+            echo "Pull latest image..."
+            docker pull $IMAGE_URI
 
-            echo "Reiniciando contenedor..."
+            echo "Restart container..."
             docker stop demo || true
             docker rm demo || true
 
             docker run -d \
               --name demo \
               -p 80:8080 \
-              ${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+              $IMAGE_URI
 
-            echo "Deploy finalizado ✅"
+            echo "Deploy completed ✅"
