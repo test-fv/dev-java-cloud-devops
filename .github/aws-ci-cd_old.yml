@@ -61,3 +61,4 @@ jobs:
             docker stop demo || true
             docker rm demo || true
             docker run -d -p 80:8080 --name demo $ECR_REPOSITORY:$IMAGE_TAG
+            docker ps -a
