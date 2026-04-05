@@ -1,0 +1,111 @@
+name: CI/CD Production Ready AWS
+
+on:
+  push:
+    branches:
+      - dev
+
+env:
+  IMAGE_TAG: ${{ github.sha }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+
+jobs:
+
+# =========================
+# BUILD & PUSH
+# =========================
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region $AWS_REGION           | docker login --username AWS --password-stdin           $(echo $ECR_REPOSITORY | cut -d'/' -f1)
+
+      - name: Build image
+        run: |
+          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REPOSITORY:$IMAGE_TAG $ECR_REPOSITORY:latest
+
+      - name: Push images
+        run: |
+          docker push $ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REPOSITORY:latest
+
+# =========================
+# DEPLOY SEGURO
+# =========================
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy with rollback protection
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+
+          script: |
+            set -e
+
+            echo "========== DEPLOY START =========="
+
+            IMAGE=${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+            REGION=${{ secrets.AWS_REGION }}
+
+            echo "Login ECR..."
+            aws ecr get-login-password --region $REGION             | docker login --username AWS --password-stdin             $(echo $IMAGE | cut -d'/' -f1)
+
+            echo "Pull new image..."
+            docker pull $IMAGE
+
+            echo "Saving current container..."
+            OLD_CONTAINER=$(docker ps -q -f name=demo || true)
+
+            echo "Starting NEW container (temporary)..."
+            docker run -d -p 8081:8080 --name demo_new $IMAGE
+
+            echo "Waiting container startup..."
+            sleep 15
+
+            echo "Health check..."
+            if curl -f http://localhost:8081/health; then
+              echo "✅ Health check OK"
+
+              echo "Switching containers..."
+
+              docker stop demo || true
+              docker rm demo || true
+
+              docker stop demo_new
+              docker rm demo_new
+
+              docker run -d -p 80:8080 --name demo $IMAGE
+
+              echo "Cleaning old images..."
+              docker image prune -af
+
+              echo "✅ DEPLOY SUCCESS"
+
+            else
+              echo "❌ Health check FAILED — rollback"
+
+              docker stop demo_new || true
+              docker rm demo_new || true
+
+              exit 1
+            fi
+
+            echo "========== DEPLOY END =========="

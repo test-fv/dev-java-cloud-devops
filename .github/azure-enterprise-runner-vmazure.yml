@@ -1,0 +1,85 @@
+name: Azure Enterprise CI/CD
+
+on:
+  push:
+    branches:
+      - dev
+
+env:
+  IMAGE_NAME: demo
+  ACR_NAME: ${{ secrets.ACR_NAME }}
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+
+# ===================================
+# BUILD & PUSH (GitHub Hosted)
+# ===================================
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login ACR
+        run: az acr login --name $ACR_NAME
+
+      - name: Build & Push
+        run: |
+          docker build -t $ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG .
+          docker tag $ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG                      $ACR_NAME.azurecr.io/$IMAGE_NAME:latest
+
+          docker push $ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG
+          docker push $ACR_NAME.azurecr.io/$IMAGE_NAME:latest
+
+
+# ===================================
+# DEPLOY (SELF HOSTED RUNNER)
+# ===================================
+  deploy:
+    needs: build
+    runs-on: self-hosted
+
+    steps:
+
+      - name: Deploy locally on VM
+        run: |
+          set -e
+
+          IMAGE=$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG
+
+          echo "Pull image"
+          docker pull $IMAGE
+
+          ACTIVE=$(cat active_slot.txt 2>/dev/null || echo blue)
+
+          if [ "$ACTIVE" = "blue" ]; then
+              NEW_SLOT=green
+              PORT=8082
+          else
+              NEW_SLOT=blue
+              PORT=8081
+          fi
+
+          echo "Starting $NEW_SLOT container"
+          docker run -d -p $PORT:8080 --name demo_$NEW_SLOT $IMAGE
+
+          sleep 15
+
+          curl -f http://localhost:$PORT/health
+
+          echo $NEW_SLOT > active_slot.txt
+
+          docker stop demo_$ACTIVE || true
+          docker rm demo_$ACTIVE || true
+
+          docker image prune -af
+
+          echo "Deploy SUCCESS"
