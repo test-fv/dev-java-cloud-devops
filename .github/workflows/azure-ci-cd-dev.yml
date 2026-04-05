@@ -3,7 +3,7 @@ name: CI/CD → Azure ACR → Azure VM
 on:
   push:
     branches:
-      - main
+      - dev
 
 env:
   ACR_NAME: ${{ secrets.ACR_NAME }}
