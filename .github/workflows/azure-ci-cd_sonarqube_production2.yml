@@ -32,7 +32,7 @@ jobs:
             -Dsonar.projectKey=portfolioapp \
             -Dsonar.projectName="Portfolio App" \
             -Dsonar.host.url=http://${{ secrets.SONAR_HOST_URL }} \
-            -Dsonar.login=${{ secrets.SONAR_TOKEN }}
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
             -Dsonar.qualitygate.wait=true
 
       # 4️⃣ Quality Gate (CLAVE)
