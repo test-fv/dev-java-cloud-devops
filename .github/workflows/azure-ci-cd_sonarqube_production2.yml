@@ -31,7 +31,7 @@ jobs:
           mvn clean install -DskipTests sonar:sonar \
             -Dsonar.projectKey=portfolioapp \
             -Dsonar.projectName=Portfolio App \
-            -Dsonar.host.url=http://${{ secrets.SONAR_HOST }} \
+            -Dsonar.host.url=http://${{ secrets.SONAR_HOST_URL }} \
             -Dsonar.login=${{ secrets.SONAR_TOKEN }}
 
       # 4️⃣ Quality Gate (CLAVE)
