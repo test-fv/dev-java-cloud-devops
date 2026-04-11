@@ -33,14 +33,15 @@ jobs:
             -Dsonar.projectName="Portfolio App" \
             -Dsonar.host.url=http://${{ secrets.SONAR_HOST_URL }} \
             -Dsonar.login=${{ secrets.SONAR_TOKEN }}
+            -Dsonar.qualitygate.wait=true
 
       # 4️⃣ Quality Gate (CLAVE)
-      - name: SonarQube Quality Gate
-        uses: SonarSource/sonarqube-quality-gate-action@v1
-        timeout-minutes: 5
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        continue-on-error: false
+     # - name: SonarQube Quality Gate
+      #  uses: SonarSource/sonarqube-quality-gate-action@v1
+     #   timeout-minutes: 5
+     #   env:
+      #    SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      #  continue-on-error: false
 
       # 5️⃣ Azure Login (solo si pasa calidad)
       - name: Azure Login
